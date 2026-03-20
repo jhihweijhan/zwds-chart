@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>紫微斗數 - 生日管理系統 (交互優化版)</title>
+    
+    <script src="lib/tailwind.min.js"></script>
+    <script src="lib/lunar.js"></script>
+
+    <style>
+        /* --- 核心變數 (cqi = 相對宮格寬度) ---
+             大小順序: 甲級星 > 乙級星 > 數字 > 宮名/大限 > 丙級 > 干支 > 雜曜 > 最小 */
+        :root {
+            --fs-major: clamp(16px, 13cqi, 52px);
+            --fs-minor: clamp(11px, 8cqi, 28px);
+            --fs-num: clamp(10px, 7cqi, 22px);
+            --fs-palace: clamp(10px, 6.5cqi, 22px);
+            /* --fs-daxian: 改為 calc(var(--fs-major) * 0.8) */
+            --fs-mini: clamp(9px, 5.5cqi, 18px);
+            --fs-gan: clamp(9px, 5cqi, 18px);
+            --fs-mini2: clamp(8px, 4cqi, 14px);
+            --fs-cell-small: clamp(7px, 3.5cqi, 12px);
+        }
+
+        /* --- 全局樣式 --- */
+        body { 
+            font-family: "Microsoft JhengHei", "微軟正黑體", sans-serif; 
+            background-color: #e0e0e0; 
+            overflow: hidden; 
+            height: 100vh; 
+            display: flex; 
+            flex-direction: column; 
+            user-select: none; 
+        }
+        
+        /* Windows 復古風格邊框 */
+        .win-border-out { border: 2px solid; border-color: #f0f0f0 #404040 #404040 #f0f0f0; }
+        .win-border-in { border: 2px solid; border-color: #404040 #f0f0f0 #f0f0f0 #404040; }
+        
+        .win-btn { 
+            background: #e0e0e0; border: 2px solid; border-color: #fff #404040 #404040 #fff; 
+            cursor: pointer; transition: active 0.1s;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .win-btn:active { border-color: #404040 #fff #fff #404040; background: #ccc; transform: translateY(1px); }
+
+        /* 欄位選擇行特效 */
+        .input-row {
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 2px solid transparent;
+            padding: 4px;
+            border-radius: 4px;
+            background: #dcdcdc;
+        }
+        .input-row:active {
+            background: #ccc; /* 點擊時的按壓感 */
+        }
+        .input-row.active {
+            background: #fff;
+            border-color: #2563eb;
+            box-shadow: 0 0 10px rgba(37, 99, 235, 0.2);
+        }
+        .input-row.active .unit-label {
+            background-color: #2563eb;
+            color: white;
+            border-color: #1e40af;
+        }
+        .input-row.active .display-screen {
+            border-color: #2563eb;
+            background-color: #f0f9ff;
+            color: #000;
+        }
+
+        /* 顯示螢幕風格 */
+        .display-screen {
+            background-color: #222;
+            color: #0f0;
+            font-family: 'Courier New', Courier, monospace;
+            border: 2px solid #808080;
+            border-radius: 4px;
+            box-shadow: inset 2px 2px 5px rgba(0,0,0,0.5);
+            transition: all 0.2s;
+        }
+
+        /* 單位標籤按鈕 */
+        .unit-label {
+            background: #d4d0c8;
+            border: 2px solid #808080;
+            border-radius: 4px;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; color: #444;
+            transition: all 0.2s;
+            font-size: 1.5rem;
+        }
+
+        /* 表格樣式 */
+        .data-table th { background-color: #d4d0c8; border: 1px solid #808080; padding: 8px; text-align: left; font-size: 16px; position: sticky; top: 0;}
+        .data-table td { border: 1px solid #d0d0d0; padding: 6px; background: white; cursor: pointer; font-size: 16px;}
+        .data-table tr:hover td { background-color: #e8f0ff; }
+        .data-table tr.selected td { background-color: #000080; color: white; }
+
+        /* 命盤樣式 (滿版) */
+        .chart-fullscreen {
+            width: 100%; height: 100%; background: #000; display: grid;
+            grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr);
+            gap: 1px; border: 1px solid #000;
+        }
+
+        .cell {
+            background-color: #fff;
+            display: flex;
+            flex-direction: column;
+            padding: clamp(2px, 0.8cqi, 8px);
+            overflow: hidden;
+            position: relative;
+            container-type: inline-size;
+        }
+        /* 甲級星：絕對定位於右上，允許延伸蓋住下方 */
+        .cell-majors {
+            position: absolute;
+            top: clamp(2px, 0.8cqi, 8px);
+            right: clamp(2px, 0.8cqi, 8px);
+            z-index: 10;
+            display: flex;
+            flex-direction: row-reverse;
+            align-items: flex-start;
+            gap: clamp(2px, 1.5cqi, 8px);
+        }
+        /* 乙級星區：佔剩餘空間，溢出裁切 */
+        .cell-stars {
+            flex: 1 1 0;
+            min-height: 0;
+            overflow: hidden;
+        }
+        /* 丙級以下：預設隱藏 */
+        .cell-mini-stars { display: block; }
+        .hide-mini-stars .cell-mini-stars { display: none; }
+        /* 資訊區 + 小限：固定大小 */
+        .cell-info, .cell-xiaoxian {
+            flex: 0 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+        /* 資訊區三欄的 flex 約束 */
+        .cell-info > div {
+            min-width: 0;
+        }
+        /* 左右欄可收縮、溢出隱藏；中欄不收縮 */
+        .cell-info-side {
+            flex: 0 1 auto;
+            overflow: hidden;
+        }
+        .cell-info-center {
+            flex: 0 0 auto;
+        }
+        .writing-vertical {
+            writing-mode: vertical-rl;
+            text-orientation: upright;
+            letter-spacing: 0.05em;
+            display: inline-flex;
+            align-items: center;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+        
+        /* 字體與標記 (RWD) - 加大易讀 */
+        .font-major {
+            font-size: var(--fs-major);
+            font-weight: 900;
+            line-height: 1.1;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.15);
+        }
+        .font-minor {
+            font-size: var(--fs-minor);
+            font-weight: 700;
+            line-height: 1.3;
+        }
+        .font-mini {
+            font-size: var(--fs-mini);
+            font-weight: 500;
+            line-height: 1.3;
+        }
+        .font-mini2 {
+            font-size: var(--fs-mini2);
+            font-weight: 500;
+            line-height: 1.3;
+        }
+        .font-num {
+            font-size: var(--fs-num);
+            font-weight: bold;
+        }
+        .font-cell-small { font-size: var(--fs-cell-small); }
+
+        /* 星曜顏色 - 高對比度 */
+        .text-major { color: #6B21A8; } /* purple-800 */
+        .text-major-red { color: #DC2626; } /* red-600 */
+        .text-minor { color: #1E40AF; } /* blue-800 */
+        .text-palace {
+            color: #DC2626;
+            font-size: var(--fs-palace);
+            font-weight: 900;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+        }
+        .text-gan-name {
+            color: #1F2937;
+            font-size: var(--fs-gan);
+            font-weight: bold;
+        }
+        .text-daxian {
+            font-size: calc(var(--fs-major) * 0.8);
+            font-weight: 900;
+            color: #000;
+            white-space: nowrap;
+        }
+        .sihua-mark {
+            font-size: 0.6em;
+            border-radius: 3px;
+            color: white;
+            padding: 2px 4px;
+            margin-top: 3px;
+            min-width: 1.4em;
+            text-align: center;
+            font-weight: 600;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+        .mark-lu, .mark-quan, .mark-ke { background-color: #DC2626; }
+        .mark-ji { background-color: #1E40AF; }
+
+        /* 無障礙：高對比度焦點指示器 */
+        :focus-visible { outline: 3px solid #2563eb; outline-offset: 2px; }
+
+        /* 跳過導航連結 (無障礙) */
+        .skip-link {
+            position: absolute; left: -9999px; top: auto; width: 1px; height: 1px; overflow: hidden;
+        }
+        .skip-link:focus {
+            position: fixed; top: 0; left: 0; width: auto; height: auto; padding: 1rem; background: #000; color: #fff; z-index: 9999;
+        }
+
+        /* 時辰選擇樣式優化 */
+        .hour-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr); /* 預設3列 */
+            gap: 4px;
+            height: 100%;
+            overflow: hidden;
+        }
+        .hour-option {
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            background-color: #fff; border: 1px solid #aaa; cursor: pointer;
+            transition: all 0.1s; text-align: center;
+            border-radius: 4px;
+        }
+        .hour-option:hover { background-color: #e0f2fe; }
+        .hour-option.selected { 
+            background-color: #2563eb; color: white; border-color: #1e40af; 
+            box-shadow: inset 0 0 5px rgba(0,0,0,0.3);
+        }
+        .hour-name { font-size: 1.5rem; font-weight: 900; line-height: 1; }
+        .hour-time { font-size: 0.8rem; font-weight: normal; opacity: 0.8; }
+
+        @media (min-width: 768px) {
+            .hour-grid { grid-template-columns: repeat(4, 1fr); } 
+            .hour-name { font-size: 1.8rem; }
+        }
+        @media (min-width: 1024px) {
+            .hour-grid { grid-template-columns: repeat(3, 1fr); }
+            .hour-name { font-size: 2rem; }
+        }
+
+        .setting-slider {
+            width: 100%;
+            cursor: pointer;
+            height: 6px;
+            margin-top: 6px;
+            border-radius: 3px;
+            background: #d1d5db;
+            -webkit-appearance: none;
+        }
+        .setting-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .setting-slider::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+    <!-- 無障礙：跳過導航連結 -->
+    <a href="#main-content" class="skip-link">跳至主要內容</a>
+
+    <div id="navbar" class="bg-[#d4d0c8] px-4 pt-2 border-b border-gray-500 flex select-none shrink-0 hidden" role="navigation" aria-label="主導航"></div>
+
+    <main id="main-content" class="flex-grow relative bg-[#ebe9d8] overflow-hidden flex flex-col h-full" role="main">
+
+        <div id="tab-input" class="flex-grow p-2 md:p-4 flex flex-col h-full overflow-hidden" role="tabpanel" aria-label="輸入資料">
+            <div class="w-full h-full border-2 p-2 md:p-3 bg-[#ebe9d8] shadow-lg win-border-out flex flex-col lg:flex-row gap-4">
+                
+                <div class="w-full lg:w-1/2 flex flex-col gap-3 h-full min-h-0">
+                    
+                    <div class="flex gap-2 shrink-0">
+                        <div class="flex flex-col w-24">
+                            <label for="inp-id" class="text-sm font-bold text-gray-600 pl-1">編號</label>
+                            <input type="text" id="inp-id" readonly class="w-full h-10 border-2 px-2 bg-gray-200 win-border-in text-lg text-center font-mono" aria-readonly="true">
+                        </div>
+                        <div class="flex flex-col flex-grow">
+                            <label for="inp-name" class="text-sm font-bold text-gray-600 pl-1">姓名</label>
+                            <input type="text" id="inp-name" class="w-full h-10 border-2 px-2 win-border-in bg-white text-xl font-bold text-blue-900" aria-label="輸入姓名">
+                        </div>
+                    </div>
+
+                    <fieldset class="flex justify-between items-center bg-gray-200 p-2 rounded border border-gray-300 shrink-0 win-border-in" role="group" aria-label="曆法選擇">
+                        <div class="flex gap-4" role="radiogroup" aria-label="選擇曆法類型">
+                            <label class="flex items-center cursor-pointer text-lg font-bold hover:text-blue-700"><input type="radio" name="calType" value="lunar" checked class="w-5 h-5 mr-1">農曆</label>
+                            <label class="flex items-center cursor-pointer text-lg font-bold hover:text-blue-700"><input type="radio" name="calType" value="solar" class="w-5 h-5 mr-1">國曆</label>
+                        </div>
+                        <div class="flex items-center gap-4">
+                            <label class="relative inline-flex items-center cursor-pointer select-none" aria-label="是否為閏月">
+                                <input type="checkbox" id="inp-leap" class="sr-only peer">
+                                <div class="w-20 h-10 bg-gray-300 rounded-full peer-focus:ring-4 peer-focus:ring-red-300 peer-checked:bg-red-500 after:content-[''] after:absolute after:top-1 after:left-1 after:bg-white after:rounded-full after:h-8 after:w-8 after:shadow-md after:transition-transform after:duration-200 after:ease-out peer-checked:after:translate-x-10 transition-colors duration-200 ease-out"></div>
+                                <span class="ml-3 text-2xl font-bold text-gray-700 peer-checked:text-red-700 transition-colors duration-150">閏月</span>
+                            </label>
+                            <div id="leap-mode-wrapper" class="overflow-hidden transition-all duration-200 ease-out" style="max-width: 0; opacity: 0;">
+                                <select id="inp-leap-mode" class="text-xl border-2 border-red-400 rounded-lg px-4 py-2 bg-red-50 text-red-800 font-bold cursor-pointer focus:ring-4 focus:ring-red-300 focus:outline-none hover:bg-red-100 transition-colors duration-150">
+                                    <option value="15-before">十五前歸本月</option>
+                                    <option value="14-before">十四前歸本月</option>
+                                    <option value="this">閏月視為本月</option>
+                                    <option value="next">閏月視為下月</option>
+                                </select>
+                            </div>
+                        </div>
+                    </fieldset>
+
+                    <div class="flex flex-row gap-2 flex-grow min-h-0 win-border-out p-2 bg-[#d4d0c8]">
+                        
+                        <div class="w-[45%] flex flex-col gap-3 h-full justify-center">
+                            <input type="hidden" id="inp-year" value="72">
+                            <input type="hidden" id="inp-month" value="9">
+                            <input type="hidden" id="inp-day" value="21">
+                            <input type="hidden" id="inp-hour-num" value="0">
+
+                            <div onclick="app.handleFieldClick('year')" onkeypress="event.key==='Enter'&&app.handleFieldClick('year')" id="row-year" class="input-row flex h-20 gap-2 items-center active" title="點擊帶入數值" role="button" tabindex="0" aria-label="輸入年份，目前值：72">
+                                <div class="display-screen flex-grow h-full flex items-center justify-center text-4xl font-bold" id="display-year" aria-live="polite">72</div>
+                                <div class="unit-label w-16 h-full text-2xl" aria-hidden="true">年</div>
+                            </div>
+
+                            <div onclick="app.handleFieldClick('month')" onkeypress="event.key==='Enter'&&app.handleFieldClick('month')" id="row-month" class="input-row flex h-20 gap-2 items-center" title="點擊帶入數值" role="button" tabindex="0" aria-label="輸入月份，目前值：9">
+                                <div class="display-screen flex-grow h-full flex items-center justify-center text-4xl font-bold" id="display-month" aria-live="polite">9</div>
+                                <div class="unit-label w-16 h-full text-2xl" aria-hidden="true">月</div>
+                            </div>
+
+                            <div onclick="app.handleFieldClick('day')" onkeypress="event.key==='Enter'&&app.handleFieldClick('day')" id="row-day" class="input-row flex h-20 gap-2 items-center" title="點擊帶入數值" role="button" tabindex="0" aria-label="輸入日期，目前值：21">
+                                <div class="display-screen flex-grow h-full flex items-center justify-center text-4xl font-bold" id="display-day" aria-live="polite">21</div>
+                                <div class="unit-label w-16 h-full text-2xl" aria-hidden="true">日</div>
+                            </div>
+                            
+                            <div class="text-center text-xs text-gray-500 mt-1">
+                                &#8505; 輸入數字後點擊按鈕或按 Enter
+                            </div>
+                        </div>
+
+                        <div class="w-[55%] flex flex-col gap-2 h-full justify-center pl-2 border-l border-gray-400">
+                            <div id="pad-display" class="w-full h-12 bg-white win-border-in flex items-center justify-end px-2 text-3xl font-mono text-gray-600 mb-1" aria-live="polite" aria-label="數字輸入顯示"></div>
+
+                            <div class="grid grid-cols-3 gap-1 flex-grow max-h-[280px]" role="group" aria-label="數字鍵盤">
+                                <button class="win-btn font-bold text-2xl" onclick="app.pad(7)" aria-label="7">7</button>
+                                <button class="win-btn font-bold text-2xl" onclick="app.pad(8)" aria-label="8">8</button>
+                                <button class="win-btn font-bold text-2xl" onclick="app.pad(9)" aria-label="9">9</button>
+
+                                <button class="win-btn font-bold text-2xl" onclick="app.pad(4)" aria-label="4">4</button>
+                                <button class="win-btn font-bold text-2xl" onclick="app.pad(5)" aria-label="5">5</button>
+                                <button class="win-btn font-bold text-2xl" onclick="app.pad(6)" aria-label="6">6</button>
+
+                                <button class="win-btn font-bold text-2xl" onclick="app.pad(1)" aria-label="1">1</button>
+                                <button class="win-btn font-bold text-2xl" onclick="app.pad(2)" aria-label="2">2</button>
+                                <button class="win-btn font-bold text-2xl" onclick="app.pad(3)" aria-label="3">3</button>
+
+                                <button class="win-btn font-bold text-xl text-red-600" onclick="app.clearPad()" aria-label="清除">C</button>
+                                <button class="win-btn font-bold text-2xl" onclick="app.pad(0)" aria-label="0">0</button>
+                                <button class="win-btn font-bold text-xl text-blue-600" onclick="app.handleFieldClick(app.currentField)" aria-label="確認輸入">Enter</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2 shrink-0">
+                        <button onclick="app.switchTab('list')" class="win-btn h-10 text-lg text-gray-700" aria-label="開啟生日管理列表"><span class="mr-2" aria-hidden="true">&#9776;</span>生日管理</button>
+                        <button onclick="app.resetForm()" class="win-btn h-10 text-lg text-red-700" aria-label="清空表單並重新填寫"><span class="mr-2" aria-hidden="true">&#10005;</span>清空重填</button>
+                    </div>
+
+                </div>
+
+                <div class="w-full lg:w-1/2 flex flex-col gap-3 h-full min-h-0 border-t lg:border-t-0 lg:border-l border-gray-400 pt-2 lg:pt-0 lg:pl-4">
+                    
+                    <button onclick="app.showChart()" class="win-btn w-full py-3 font-black text-blue-900 flex items-center justify-center gap-3 text-4xl bg-gradient-to-b from-yellow-100 to-yellow-300 border-yellow-500 shadow-lg hover:from-yellow-200 hover:to-yellow-400 transform active:scale-[0.98] shrink-0 rounded" aria-label="排盤，產生紫微斗數命盤">
+                        <span class="text-yellow-700 animate-pulse" aria-hidden="true">&#9733;</span> 排 盤
+                    </button>
+                    
+                    <fieldset class="flex gap-4 justify-center items-center bg-white border-2 border-gray-300 p-2 rounded shrink-0" role="radiogroup" aria-label="選擇性別">
+                        <label class="cursor-pointer flex items-center px-4 py-1 rounded hover:bg-red-50 border border-transparent hover:border-red-200 transition-all">
+                            <input type="radio" name="gender" value="F" checked class="w-6 h-6 mr-2 accent-red-600">
+                            <span class="text-3xl font-black text-red-600">女</span>
+                        </label>
+                        <div class="w-px h-8 bg-gray-300" aria-hidden="true"></div>
+                        <label class="cursor-pointer flex items-center px-4 py-1 rounded hover:bg-blue-50 border border-transparent hover:border-blue-200 transition-all">
+                            <input type="radio" name="gender" value="M" class="w-6 h-6 mr-2 accent-blue-600">
+                            <span class="text-3xl font-black text-blue-600">男</span>
+                        </label>
+                    </fieldset>
+
+                    <div class="flex-grow flex flex-col min-h-0 bg-gray-100 border border-gray-400 p-2 rounded">
+                        <div class="text-center font-bold text-gray-500 text-sm mb-1" id="hour-grid-label">請選擇出生時辰</div>
+                        <div id="hour-grid" class="hour-grid" role="listbox" aria-labelledby="hour-grid-label">
+                            </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+        <div id="tab-list" class="hidden flex-grow flex-col bg-white h-full" role="tabpanel" aria-label="生日管理列表">
+            <div class="bg-[#e0e0e0] p-2 border-b border-gray-400 flex gap-2 shrink-0 overflow-x-auto items-center">
+                <button onclick="app.switchTab('input')" class="win-btn px-4 py-2 text-lg font-bold whitespace-nowrap bg-blue-50 border-blue-300 text-blue-800">
+                    <span class="mr-1">&larr;</span> 返回輸入
+                </button>
+                <div class="border-l-2 border-gray-400 mx-2 h-8"></div>
+                <button onclick="app.deleteSelected()" class="win-btn px-4 py-2 text-lg font-bold text-red-600 whitespace-nowrap">刪除選取</button>
+                <button onclick="app.exportJSON()" class="win-btn px-4 py-2 text-lg font-bold text-green-700 whitespace-nowrap">匯出備份</button>
+                <button onclick="document.getElementById('file-input').click()" class="win-btn px-4 py-2 text-lg font-bold text-gray-700 whitespace-nowrap">匯入備份</button>
+                <input type="file" id="file-input" class="hidden" onchange="app.importJSON(this)">
+            </div>
+            <div class="flex-grow overflow-auto p-2">
+                <table class="w-full data-table border-collapse w-full">
+                    <thead class="sticky top-0 z-10 shadow-sm">
+                        <tr><th class="w-20">編號</th><th class="w-32">姓名</th><th class="w-16">性別</th><th class="w-16">曆法</th><th class="w-20">年</th><th class="w-16">月</th><th class="w-16">日</th><th class="w-24">時</th><th>閏</th></tr>
+                    </thead>
+                    <tbody id="record-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="tab-chart" class="fixed inset-0 hidden bg-white z-50" role="tabpanel" aria-label="命盤顯示">
+            <div id="chart-container" class="chart-fullscreen"></div>
+        </div>
+    </main>
+
+    <script>
+        // === 核心邏輯 (保持不變) ===
+        const ZWDSEngine = {
+            Stems: ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"],
+            Branches: ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"],
+            PalaceNames: ["命宮", "兄弟", "夫妻", "子女", "財帛", "疾厄", "遷移", "交友", "官祿", "田宅", "福德", "父母"],
+            BureauMap: {2: "水二局", 3: "木三局", 4: "金四局", 5: "土五局", 6: "火六局"},
+            ChangSheng12: ["長生", "沐浴", "冠帶", "臨官", "帝旺", "衰", "病", "死", "墓", "絕", "胎", "養"],
+            Doctor12: ["博士", "力士", "青龍", "小耗", "將軍", "奏書", "飛廉", "喜神", "病符", "大耗", "伏兵", "官府"],
+            LuCun_Map: {0: 2, 1: 3, 2: 5, 3: 6, 4: 5, 5: 6, 6: 8, 7: 9, 8: 11, 9: 0},
+            KuiYue_Map: {0:[1,7], 4:[1,7], 6:[1,7], 1:[0,8], 5:[0,8], 2:[11,9], 3:[11,9], 7:[6,2], 8:[5,3], 9:[5,3]},
+            SiHua_Table: [["廉貞", "破軍", "武曲", "太陽"], ["天機", "天梁", "紫微", "太陰"], ["天同", "天機", "文昌", "廉貞"], ["太陰", "天同", "天機", "巨門"], ["貪狼", "太陰", "右弼", "天機"], ["武曲", "貪狼", "天梁", "文曲"], ["太陽", "武曲", "太陰", "天同"], ["巨門", "太陽", "文曲", "文昌"], ["天梁", "紫微", "左輔", "武曲"], ["破軍", "巨門", "太陰", "貪狼"]],
+            // 星曜亮度表：[子,丑,寅,卯,辰,巳,午,未,申,酉,戌,亥] 廟旺得利平不陷 (參考 iztro.com)
+            Brightness: {
+                "紫微": ["平","廟","旺","旺","得","旺","廟","廟","旺","旺","得","旺"],
+                "天機": ["廟","陷","得","旺","利","平","廟","陷","得","旺","利","平"],
+                "太陽": ["陷","不","旺","廟","旺","旺","旺","得","得","陷","不","陷"],
+                "武曲": ["旺","廟","得","利","廟","平","旺","廟","得","利","廟","平"],
+                "天同": ["旺","不","利","平","平","廟","陷","不","旺","平","平","廟"],
+                "廉貞": ["平","利","廟","平","利","陷","平","利","廟","平","利","陷"],
+                "天府": ["廟","廟","廟","得","廟","得","旺","廟","得","旺","廟","得"],
+                "太陰": ["廟","廟","旺","陷","陷","陷","不","不","利","不","旺","廟"],
+                "貪狼": ["旺","廟","平","利","廟","陷","旺","廟","平","利","廟","陷"],
+                "巨門": ["旺","不","廟","廟","陷","旺","旺","不","廟","廟","陷","旺"],
+                "天相": ["廟","廟","廟","陷","得","得","廟","得","廟","陷","得","得"],
+                "天梁": ["廟","旺","廟","廟","廟","陷","廟","旺","陷","得","廟","陷"],
+                "七殺": ["旺","廟","廟","旺","廟","平","旺","廟","廟","廟","廟","平"],
+                "破軍": ["廟","旺","得","陷","旺","平","廟","旺","得","陷","旺","平"]
+            },
+            // === 新增星曜對照表 ===
+            TianGuan_Map: {0:7, 1:4, 2:5, 3:6, 4:5, 5:6, 6:7, 7:4, 8:11, 9:8},
+            TianFu_Map: {0:9, 1:8, 2:0, 3:11, 4:0, 5:11, 6:2, 7:1, 8:6, 9:5},
+            TianDe_Map: {0:9, 1:8, 2:0, 3:11, 4:0, 5:11, 6:2, 7:1, 8:6, 9:5},
+            HuaGai_Map: {0:4, 1:1, 2:10, 3:7, 4:4, 5:1, 6:10, 7:7, 8:4, 9:1, 10:10, 11:7},
+            XianChi_Map: {0:9, 1:6, 2:3, 3:0, 4:9, 5:6, 6:3, 7:0, 8:9, 9:6, 10:3, 11:0},
+            FeiLian_Map: {0:8, 1:5, 2:2, 3:11, 4:8, 5:5, 6:2, 7:11, 8:8, 9:5, 10:2, 11:11},
+            PoSui_Map: {0:5, 1:1, 2:9, 3:5, 4:1, 5:9, 6:5, 7:1, 8:9, 9:5, 10:1, 11:9},
+            JieShen_Map: [8,8,10,10,0,0,2,2,4,4,6,6],
+            TianYue_Map: [10,5,4,2,6,3,11,2,5,8,4,3],
+            YueDe_Map: [5,4,3,2,1,0,11,10,9,8,7,6],
+            // 流年十二神
+            SuiQian12: ["歲建", "晦氣", "喪門", "貫索", "官符", "小耗", "大耗", "龍德", "白虎", "天德", "弔客", "病符"],
+            JiangQian12: ["將星", "攀鞍", "歲驛", "息神", "華蓋", "劫煞", "災煞", "天煞", "指背", "咸池", "月煞", "亡神"],
+            JiangXing_Map: {0:0, 1:9, 2:6, 3:3, 4:0, 5:9, 6:6, 7:3, 8:0, 9:9, 10:6, 11:3},
+            getBrightness: function(n, pos) { if(this.Brightness[n]) return this.Brightness[n][this.idx(pos)]; return ""; },
+            idx: n => (n % 12 + 12) % 12,
+            getNayinBureau: function(g, z) { let t = (Math.floor(g/2)+1) + ([0,1,6,7].includes(z)?1:[2,3,8,9].includes(z)?2:3); if(t>5) t-=5; return {1:3, 2:4, 3:2, 4:6, 5:5}[t]; },
+            generate: function(year, month, day, hour, gender, isLunar, isLeap) {
+                let solar, lunar;
+                if (isLunar) { lunar = Lunar.fromYmd(year, isLeap ? -Math.abs(month) : Math.abs(month), day); solar = lunar.getSolar(); } 
+                else { solar = Solar.fromYmd(year, month, day); lunar = solar.getLunar(); }
+                let targetSolar = (hour >= 23) ? solar.next(1) : solar;
+                let hourIdx = (hour >= 23) ? 0 : Math.floor((hour + 1) / 2) % 12;
+                let finalLunar = targetSolar.getLunar();
+                let lYear = finalLunar.getYear(), lDay = finalLunar.getDay();
+                let rawMonth = finalLunar.getMonth();
+                let isLeapMonth = rawMonth < 0;
+                let absMonth = Math.abs(rawMonth);
+                let lMonth = absMonth;
+                if (isLeapMonth) {
+                    const leapMode = document.getElementById('inp-leap-mode').value;
+                    switch (leapMode) {
+                        case '15-before': lMonth = (lDay <= 15) ? absMonth : absMonth + 1; break;
+                        case '14-before': lMonth = (lDay <= 14) ? absMonth : absMonth + 1; break;
+                        case 'this': lMonth = absMonth; break;
+                        case 'next': lMonth = absMonth + 1; break;
+                    }
+                    if (lMonth > 12) lMonth = 12;
+                }
+                let yearGan = (lYear - 4) % 10, yearZhi = (lYear - 4) % 12;
+                let mingIdx = this.idx(2 + (lMonth - 1) - hourIdx);
+                let shenIdx = this.idx(2 + (lMonth - 1) + hourIdx);
+                let tigerGan = (yearGan % 5) * 2 + 2;
+                let mingGan = (tigerGan + this.idx(mingIdx - 2)) % 10;
+                let bureauNum = this.getNayinBureau(mingGan, mingIdx);
+                let q = Math.ceil(lDay / bureauNum), diff = (q * bureauNum) - lDay;
+                let zwIdx = this.idx(2 + ((diff % 2 !== 0) ? (q - diff) : (q + diff)) - 1);
+                let tfIdx = this.idx(4 - zwIdx);
+                let chart = {};
+                for (let i = 0; i < 12; i++) chart[i] = { idx: i, name: this.Branches[i], gan: this.Stems[(tigerGan+this.idx(i-2))%10], palace: this.PalaceNames[this.idx(mingIdx-i)], majors: [], minors: [], minis:[], minis2:[], daxian: "", xiaoxian: [], changsheng: "", boshi: "", suiqian: "", jiangqian: "" };
+                this.placeStars(chart, zwIdx, tfIdx, lMonth, lDay, hourIdx, yearGan, yearZhi, mingIdx, shenIdx);
+                this.calcLimits(chart, bureauNum, yearGan, yearZhi, mingIdx, gender);
+                this.applySiHua(chart, yearGan);
+                let luPos = this.LuCun_Map[yearGan], isClock = ((yearGan%2===0)&&gender==='M')||((yearGan%2!==0)&&gender==='F');
+                for(let i=0; i<12; i++) chart[isClock?this.idx(luPos+i):this.idx(luPos-i)].boshi = this.Doctor12[i];
+                // 歲前十二神（依生年支）
+                for(let i=0; i<12; i++) chart[this.idx(yearZhi+i)].suiqian = this.SuiQian12[i];
+                // 將前十二神（依生年支三合局）
+                let jiangPos = this.JiangXing_Map[yearZhi];
+                for(let i=0; i<12; i++) chart[this.idx(jiangPos+i)].jiangqian = this.JiangQian12[i];
+                return { meta: { solar: solar.toYmd(), lunar: finalLunar.toString(), ganzhi: finalLunar.getYearInGanZhi(), bureau: this.BureauMap[bureauNum], ming: this.Branches[mingIdx], shen: this.Branches[shenIdx], gender }, chart };
+            },
+            placeStars: function(chart, zwIdx, tfIdx, m, d, h, g, z, mingIdx, shenIdx) {
+                const add = (i, n, rank="mini") => { let pos=this.idx(i); let b=(rank==="major")?this.getBrightness(n,pos):""; let target = (rank==="major") ? chart[pos].majors : (rank==="minor") ? chart[pos].minors : chart[pos].minis; target.push({name:n, type:rank, bright:b}); };
+                const add2 = (i, n) => { chart[this.idx(i)].minis2.push({name:n, type:"mini2"}); };
+                [[0,"紫微"],[-1,"天機"],[-3,"太陽"],[-4,"武曲"],[-5,"天同"],[-8,"廉貞"]].forEach(s=>add(zwIdx+s[0],s[1],"major"));
+                [[0,"天府"],[1,"太陰"],[2,"貪狼"],[3,"巨門"],[4,"天相"],[5,"天梁"],[6,"七殺"],[10,"破軍"]].forEach(s=>add(tfIdx+s[0],s[1],"major"));
+                // 時系星
+                let wcIdx = this.idx(10-h), wqIdx = this.idx(4+h), zfIdx = this.idx(4+(m-1)), ybIdx = this.idx(10-(m-1));
+                add(wcIdx,"文昌","minor"); add(wqIdx,"文曲","minor"); add(zfIdx,"左輔","minor"); add(ybIdx,"右弼","minor"); add(11-h,"地空","minor"); add(11+h,"地劫","minor");
+                let [k,y]=this.KuiYue_Map[g]; add(k,"天魁","minor"); add(y,"天鉞","minor"); let l=this.LuCun_Map[g]; add(l,"祿存","minor"); add(l+1,"擎羊","minor"); add(l-1,"陀羅","minor");
+                let f={0:2,4:2,8:2,2:1,6:1,10:1,11:9,3:9,7:9,5:3,9:3,1:3}[z], b={2:3,6:3,10:3,0:10,4:10,8:10,5:10,9:10,1:10,11:10,3:10,7:10}[z];
+                add(f+h,"火星","minor"); add(b+h,"鈴星","minor"); add({0:2,4:2,8:2,2:8,6:8,10:8,11:5,3:5,7:5,5:11,9:11,1:11}[z],"天馬","minor");
+                add(3-z,"紅鸞","mini"); add(3-z+6,"天喜","mini"); add(9+(m-1),"天刑","mini"); add(1+(m-1),"天姚","mini");
+                add({11:2,0:2,1:2,2:5,3:5,4:5,5:8,6:8,7:8,8:11,9:11,10:11}[z],"孤辰","mini"); add({11:10,0:10,1:10,2:1,3:1,4:1,5:4,6:4,7:4,8:7,9:7,10:7}[z],"寡宿","mini");
+                // === 新增乙級雜曜 (minis2) ===
+                // 年支系：龍池、鳳閣、天哭、天虛
+                add2(4+z,"龍池"); add2(10-z,"鳳閣"); add2(6-z,"天哭"); add2(6+z,"天虛");
+                // 年支三合局系：華蓋、咸池、蜚廉、破碎
+                add2(this.HuaGai_Map[z],"華蓋"); add2(this.XianChi_Map[z],"咸池"); add2(this.FeiLian_Map[z],"蜚廉"); add2(this.PoSui_Map[z],"破碎");
+                // 年干系：天官、天福、天德
+                add2(this.TianGuan_Map[g],"天官"); add2(this.TianFu_Map[g],"天福"); add2(this.TianDe_Map[g],"天德");
+                // 時系：台輔、封誥
+                add2(6+h,"台輔"); add2(2-h,"封誥");
+                // 月系：解神、天巫、天月、陰煞、月德
+                add2(this.JieShen_Map[m-1],"解神"); add2(5+(m-1),"天巫"); add2(this.TianYue_Map[m-1],"天月"); add2(2-(m-1),"陰煞"); add2(this.YueDe_Map[m-1],"月德");
+                // 日系：三台、八座（依左輔右弼位置+日數）
+                add2(zfIdx+(d-1),"三台"); add2(ybIdx-(d-1),"八座");
+                // 日系：恩光、天貴（依文昌文曲位置+日數-1）
+                add2(wcIdx+(d-2),"恩光"); add2(wqIdx+(d-2),"天貴");
+                // 依命身宮：天才、天壽
+                add2(mingIdx+z,"天才"); add2(shenIdx+z,"天壽");
+                // 丙級固定位置：天傷（交友宮）、天使（疾厄宮）
+                add2(mingIdx-7,"天傷"); add2(mingIdx-5,"天使");
+            },
+            calcLimits: function(chart, b, g, z, m, gen) {
+                let isClock = ((g%2===0)&&gen==='M')||((g%2!==0)&&gen==='F');
+                let dx = b; for(let i=0; i<12; i++) { chart[isClock?this.idx(m+i):this.idx(m-i)].daxian=`${dx}-${dx+9}`; dx+=10; }
+                let csS={2:8,5:8,3:11,4:5,6:2}[b]; for(let i=0; i<12; i++) chart[isClock?this.idx(csS+i):this.idx(csS-i)].changsheng=this.ChangSheng12[i];
+                let xxS={2:4,6:4,10:4,0:10,4:10,8:10,5:7,9:7,1:7,11:1,3:1,7:1}[z]; for(let i=0; i<12; i++) chart[gen==='M'?this.idx(xxS+i):this.idx(xxS-i)].xiaoxian=Array.from({length:7},(_,k)=>1+i+12*k);
+            },
+            applySiHua: function(chart, g) {
+                let sh=this.SiHua_Table[g], m=["祿","權","科","忌"], c=["mark-lu","mark-quan","mark-ke","mark-ji"];
+                Object.values(chart).forEach(cell=>{ [cell.majors,cell.minors,cell.minis,cell.minis2].forEach(l=>l.forEach(s=>{ let idx=sh.indexOf(s.name); if(idx!==-1){s.sihua=m[idx];s.sihuaClass=c[idx];} })); });
+            }
+        };
+
+        // === 應用邏輯 ===
+        const app = {
+            data: [], currentTab: 'input', currentField: 'year', padBuffer: "",
+            fontConfig: null,
+
+            init: function() {
+                // 初始化時辰 Grid
+                const hourGrid = document.getElementById('hour-grid');
+                const branches = ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"];
+                const times = ["00-01 / 23-00", "01-03", "03-05", "05-07", "07-09", "09-11", "11-13", "13-15", "15-17", "17-19", "19-21", "21-23"];
+                
+                branches.forEach((b, i) => {
+                    const div = document.createElement('div');
+                    div.className = "hour-option";
+                    div.id = `hour-btn-${i}`;
+                    div.setAttribute('role', 'option');
+                    div.setAttribute('tabindex', '0');
+                    div.setAttribute('aria-label', `${b}時 (${times[i]})`);
+                    div.innerHTML = `<div class="hour-name">${b}</div><div class="hour-time">${times[i]}</div>`;
+                    div.onclick = () => {
+                        let val = (i === 0) ? 0 : (i - 1) * 2 + 1;
+                        app.updateHourInput(val, i);
+                    };
+                    div.onkeypress = (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                            let val = (i === 0) ? 0 : (i - 1) * 2 + 1;
+                            app.updateHourInput(val, i);
+                        }
+                    };
+                    hourGrid.appendChild(div);
+                });
+
+                const saved = localStorage.getItem('zwds_data');
+                if (saved) this.data = JSON.parse(saved);
+                this.resetForm();
+                
+                const savedSettings = localStorage.getItem('zwds_settings');
+                if (savedSettings) { try { this.fontConfig = JSON.parse(savedSettings); } catch(e) {} }
+
+                document.querySelectorAll('input').forEach(inp => {
+                    inp.addEventListener('input', () => app.autoSave());
+                });
+                // 閏月 toggle 事件監聯（帶動畫）
+                document.getElementById('inp-leap').addEventListener('change', function() {
+                    const wrapper = document.getElementById('leap-mode-wrapper');
+                    if (this.checked) {
+                        wrapper.style.maxWidth = '280px';
+                        wrapper.style.opacity = '1';
+                    } else {
+                        wrapper.style.maxWidth = '0';
+                        wrapper.style.opacity = '0';
+                    }
+                });
+                document.addEventListener('keydown', (e) => { 
+                    if (e.key === "Escape" && this.currentTab === 'chart') this.returnToInput(); 
+                });
+            },
+
+            // === 核心更新：處理欄位點擊與確認 ===
+            handleFieldClick: function(targetField) {
+                // 如果緩衝區有數字，代表使用者想把這個數字填入點擊的欄位
+                if (this.padBuffer.length > 0) {
+                    this.validateAndCommit(targetField);
+                } else {
+                    // 緩衝區為空，只是單純切換焦點
+                    this.selectField(targetField);
+                }
+            },
+
+            validateAndCommit: function(targetField) {
+                if (!this.padBuffer.length) return;
+                const val = parseInt(this.padBuffer, 10);
+                
+                // 驗證邏輯
+                if (targetField === 'year') {
+                    // 年份無特別邏輯限制，僅長度限制(已在pad處理)，或可加 > 0
+                } else if (targetField === 'month') {
+                    if (val < 1 || val > 12) { 
+                        alert("月份需為 1 到 12"); 
+                        this.clearPad(); 
+                        return; 
+                    }
+                } else if (targetField === 'day') {
+                    if (val < 1 || val > 31) { 
+                        alert("日期需為 1 到 31"); 
+                        this.clearPad(); 
+                        return; 
+                    }
+                }
+
+                // 寫入數值
+                document.getElementById(`inp-${targetField}`).value = val;
+                document.getElementById(`display-${targetField}`).textContent = val;
+                this.padBuffer = "";
+                this.updatePadDisplay();
+                this.autoSave();
+
+                // 自動跳轉到下一欄位
+                if (targetField === 'year') this.selectField('month');
+                else if (targetField === 'month') this.selectField('day');
+                else if (targetField === 'day') this.selectField('year'); // 循環回年
+            },
+
+            selectField: function(field) {
+                this.currentField = field;
+                document.querySelectorAll('.input-row').forEach(b => b.classList.remove('active'));
+                document.getElementById(`row-${field}`).classList.add('active');
+                this.padBuffer = "";
+                this.updatePadDisplay();
+            },
+
+            updateHourInput: function(val, idx) {
+                document.getElementById('inp-hour-num').value = val;
+                document.querySelectorAll('.hour-option').forEach(d => {
+                    d.classList.remove('selected');
+                    d.setAttribute('aria-selected', 'false');
+                });
+                const selected = document.getElementById(`hour-btn-${idx}`);
+                selected.classList.add('selected');
+                selected.setAttribute('aria-selected', 'true');
+                this.autoSave();
+            },
+
+            pad: function(n) {
+                // 根據當前焦點欄位，限制輸入長度
+                const maxLen = (this.currentField === 'year') ? 3 : 2;
+                
+                if (this.padBuffer.length >= maxLen) return;
+                this.padBuffer += String(n);
+                this.updatePadDisplay();
+            },
+
+            clearPad: function() {
+                this.padBuffer = "";
+                this.updatePadDisplay();
+            },
+
+            updatePadDisplay: function() {
+                const el = document.getElementById('pad-display');
+                el.innerHTML = `${this.padBuffer}<span class="animate-pulse">_</span>`;
+            },
+
+            updateFontSize: function(type, val) {
+                if (!this.fontConfig) this.fontConfig = {};
+                this.fontConfig[type] = parseInt(val);
+                document.documentElement.style.setProperty(`--fs-${type}`, val + 'px');
+            },
+
+            applyFontConfig: function() {
+                if (!this.fontConfig) return;
+                Object.entries(this.fontConfig).forEach(function(entry) {
+                    document.documentElement.style.setProperty('--fs-' + entry[0], entry[1] + 'px');
+                });
+            },
+
+            saveFontSettings: function() {
+                if (!this.fontConfig) return;
+                localStorage.setItem('zwds_settings', JSON.stringify(this.fontConfig));
+                const btn = document.querySelector('.save-settings-btn');
+                if(btn) { const old=btn.innerHTML; btn.innerHTML='&#10003;'; setTimeout(()=>btn.innerHTML=old, 1000); }
+            },
+
+            toggleCenterInfo: function() {
+                const panel = document.getElementById('center-info-panel');
+                panel.classList.toggle('hidden');
+                const btn = document.getElementById('btn-toggle-info');
+                if (!panel.classList.contains('hidden')) {
+                    btn.style.background = '#dbeafe';
+                    btn.style.borderColor = '#2563eb';
+                } else {
+                    btn.style.background = '';
+                    btn.style.borderColor = '';
+                }
+            },
+
+            toggleMiniStars: function() {
+                const container = document.getElementById('chart-container');
+                container.classList.toggle('hide-mini-stars');
+                const btn = document.getElementById('btn-toggle-mini');
+                if (!container.classList.contains('hide-mini-stars')) {
+                    btn.style.background = '#e9d5ff';
+                    btn.style.borderColor = '#7c3aed';
+                } else {
+                    btn.style.background = '';
+                    btn.style.borderColor = '';
+                }
+            },
+
+            resetFontSettings: function() {
+                this.fontConfig = null;
+                localStorage.removeItem('zwds_settings');
+                ['major','minor','mini','mini2','num','palace','gan','cell-small'].forEach(function(k) {
+                    document.documentElement.style.removeProperty('--fs-' + k);
+                });
+            },
+
+            switchTab: function(tabId) {
+                this.currentTab = tabId;
+                document.getElementById('tab-input').classList.toggle('hidden', tabId !== 'input');
+                document.getElementById('tab-input').classList.toggle('flex', tabId === 'input');
+                
+                document.getElementById('tab-list').classList.toggle('hidden', tabId !== 'list');
+                document.getElementById('tab-list').classList.toggle('flex', tabId === 'list');
+
+                document.getElementById('tab-chart').classList.toggle('hidden', tabId !== 'chart');
+
+                if (tabId === 'list') this.renderTable();
+            },
+
+            enterFullscreen: function() {
+                if (document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen().catch(e => console.log(e));
+                }
+            },
+
+            exitFullscreen: function() {
+                if (document.exitFullscreen) {
+                    document.exitFullscreen().catch(e => console.log(e));
+                }
+            },
+
+            returnToInput: function() {
+                this.exitFullscreen();
+                this.switchTab('input');
+            },
+
+            resetForm: function() {
+                let maxId = 0;
+                this.data.forEach(d => { if(parseInt(d.id)>maxId) maxId=parseInt(d.id); });
+                document.getElementById('inp-id').value = String(maxId + 1).padStart(6, '0');
+                document.getElementById('inp-name').value = "";
+                
+                document.getElementById('inp-year').value = 72; 
+                document.getElementById('display-year').textContent = 72;
+                
+                document.getElementById('inp-month').value = 9; 
+                document.getElementById('display-month').textContent = 9;
+                
+                document.getElementById('inp-day').value = 21; 
+                document.getElementById('display-day').textContent = 21;
+                
+                document.querySelector('input[name="calType"][value="lunar"]').checked = true;
+                document.querySelector('input[name="gender"][value="F"]').checked = true;
+                document.getElementById('inp-leap').checked = false;
+                document.getElementById('leap-mode-wrapper').style.maxWidth = '0';
+                document.getElementById('leap-mode-wrapper').style.opacity = '0';
+
+                this.updateHourInput(0, 0);
+                this.selectField('year');
+            },
+
+            autoSave: function() {
+                const id = document.getElementById('inp-id').value;
+                const record = {
+                    id: id, name: document.getElementById('inp-name').value || "未命名",
+                    year: parseInt(document.getElementById('inp-year').value), 
+                    month: parseInt(document.getElementById('inp-month').value),
+                    day: parseInt(document.getElementById('inp-day').value), 
+                    hour: parseInt(document.getElementById('inp-hour-num').value),
+                    calType: document.querySelector('input[name="calType"]:checked').value,
+                    gender: document.querySelector('input[name="gender"]:checked').value,
+                    isLeap: document.getElementById('inp-leap').checked
+                };
+                const idx = this.data.findIndex(d => d.id === id);
+                if (idx >= 0) this.data[idx] = record; else this.data.push(record);
+                localStorage.setItem('zwds_data', JSON.stringify(this.data));
+            },
+
+            renderTable: function() {
+                const tbody = document.getElementById('record-tbody'); tbody.innerHTML = "";
+                this.data.forEach(d => {
+                    const tr = document.createElement('tr');
+                    const hourLabel = this.getHourLabel(d.hour);
+                    tr.innerHTML = `<td>${d.id}</td><td>${d.name}</td><td class="${d.gender==='M'?'text-blue-800':'text-red-800'} font-bold">${d.gender==='M'?'男':'女'}</td><td>${d.calType==='lunar'?'農曆':'國曆'}</td><td>${d.year}</td><td>${d.month}</td><td>${d.day}</td><td>${hourLabel}</td><td>${d.isLeap?'閏':''}</td>`;
+                    tr.onclick = () => { this.loadRecord(d); this.switchTab('input'); }; tbody.appendChild(tr);
+                });
+            },
+            
+            getHourLabel: function(h) {
+                if (h===23 || h===0) return "子";
+                const idx = Math.floor((h+1)/2);
+                return ["子","丑","寅","卯","辰","巳","午","未","申","酉","戌","亥"][idx];
+            },
+
+            loadRecord: function(d) {
+                document.getElementById('inp-id').value = d.id; 
+                document.getElementById('inp-name').value = d.name;
+                document.getElementById('inp-year').value = d.year; document.getElementById('display-year').textContent = d.year;
+                document.getElementById('inp-month').value = d.month; document.getElementById('display-month').textContent = d.month;
+                document.getElementById('inp-day').value = d.day; document.getElementById('display-day').textContent = d.day;
+                document.querySelector(`input[name="calType"][value="${d.calType}"]`).checked = true; 
+                document.querySelector(`input[name="gender"][value="${d.gender}"]`).checked = true; 
+                document.getElementById('inp-leap').checked = d.isLeap;
+                const leapWrapper = document.getElementById('leap-mode-wrapper');
+                leapWrapper.style.maxWidth = d.isLeap ? '280px' : '0';
+                leapWrapper.style.opacity = d.isLeap ? '1' : '0';
+                let hIdx = (d.hour===23 || d.hour===0) ? 0 : (Math.floor((d.hour+1)/2)); 
+                this.updateHourInput(d.hour, hIdx);
+                this.selectField('year');
+            },
+
+            deleteSelected: function() { const id = document.getElementById('inp-id').value; if(!confirm("確定刪除目前編號 ("+id+") 的資料嗎?")) return; this.data = this.data.filter(d => d.id !== id); localStorage.setItem('zwds_data', JSON.stringify(this.data)); this.resetForm(); this.renderTable(); },
+
+            showChart: function() {
+                try {
+                    if (typeof Lunar === 'undefined' || typeof Solar === 'undefined') {
+                        throw new Error('農曆轉換程式庫未載入，請確認 lib/lunar.js 檔案存在');
+                    }
+                    this.autoSave();
+                    let y = parseInt(document.getElementById('inp-year').value);
+                    const m = parseInt(document.getElementById('inp-month').value);
+                    const d = parseInt(document.getElementById('inp-day').value);
+                    const h = parseInt(document.getElementById('inp-hour-num').value);
+                    if (isNaN(y) || isNaN(m) || isNaN(d) || isNaN(h)) {
+                        throw new Error('輸入資料不完整：年=' + y + ' 月=' + m + ' 日=' + d + ' 時=' + h);
+                    }
+                    if (m < 1 || m > 12) throw new Error('月份須為 1~12，目前為 ' + m);
+                    if (d < 1 || d > 30) throw new Error('日期須為 1~30，目前為 ' + d);
+                    if(y < 1900) y += 1911;
+                    const genderEl = document.querySelector('input[name="gender"]:checked');
+                    const calTypeEl = document.querySelector('input[name="calType"]:checked');
+                    if (!genderEl || !calTypeEl) throw new Error('請選擇性別與曆法');
+                    const g = genderEl.value, lunar = calTypeEl.value === 'lunar', leap = document.getElementById('inp-leap').checked;
+
+                    const result = ZWDSEngine.generate(y, m, d, h, g, lunar, leap);
+                    this.renderChartDOM(result);
+                    this.applyFontConfig();
+                    this.switchTab('chart');
+                    this.enterFullscreen();
+                } catch (err) {
+                    this.showError(err);
+                }
+            },
+
+            showError: function(err) {
+                const msg = err.message || String(err);
+                const stack = err.stack || '';
+                const info = '錯誤訊息：' + msg + '\n\n'
+                    + '瀏覽器：' + navigator.userAgent + '\n'
+                    + '時間：' + new Date().toISOString() + '\n'
+                    + '堆疊：' + stack;
+                const copied = confirm(
+                    '排盤發生錯誤\n\n' + msg + '\n\n'
+                    + '按「確定」複製錯誤資訊到剪貼簿，可貼給開發者協助排查。'
+                );
+                if (copied) {
+                    navigator.clipboard.writeText(info).then(function() {
+                        alert('已複製到剪貼簿，請貼給開發者。');
+                    }).catch(function() {
+                        prompt('無法自動複製，請手動複製以下內容：', info);
+                    });
+                }
+            },
+
+            renderChartDOM: function(data) {
+                const c = document.getElementById('chart-container'); c.innerHTML = "";
+                c.setAttribute('role', 'grid');
+                c.setAttribute('aria-label', '紫微斗數命盤');
+                const pos = { 5:"1/1", 6:"1/2", 7:"1/3", 8:"1/4", 4:"2/1", 9:"2/4", 3:"3/1", 10:"3/4", 2:"4/1", 1:"4/2", 0:"4/3", 11:"4/4" };
+                Object.values(data.chart).forEach(cell => {
+                    const div = document.createElement('div');
+                    div.className = "cell border-r border-b border-black";
+                    div.style.gridArea = pos[cell.idx];
+                    div.setAttribute('role', 'gridcell');
+                    div.setAttribute('aria-label', `${cell.palace} - ${cell.gan}${cell.name}宮`);
+                    div.setAttribute('tabindex', '0');
+                    // 甲級星 - 大字直書，亮度標記更清晰
+                    let maj = cell.majors.map(s=>`<div class="flex flex-col items-center ${['廟','旺'].includes(s.bright)?'text-major-red':'text-major'} leading-none font-major" role="img" aria-label="${s.name}${s.bright?'（'+s.bright+'）':''}${s.sihua?'化'+s.sihua:''}">
+                        <span class="writing-vertical">${s.name}</span>
+                        <div class="flex flex-col items-center mt-1 gap-0.5">
+                            ${s.sihua?`<span class="sihua-mark mark-${{祿:'lu',權:'quan',科:'ke',忌:'ji'}[s.sihua]}">${s.sihua}</span>`:''}
+                            <span class="font-cell-small font-bold ${['廟','旺'].includes(s.bright)?'text-red-600':'text-blue-800'}">${s.bright}</span>
+                        </div>
+                    </div>`).join('');
+                    // 乙級星
+                    let min = cell.minors.map(s=>`<span class="font-minor whitespace-nowrap ${s.name==='祿存'?'text-red-700':'text-minor'}">${s.name}${s.sihua?`<span class="sihua-mark mark-${{祿:'lu',權:'quan',科:'ke',忌:'ji'}[s.sihua]} ml-1 align-middle">${s.sihua}</span>`:''}</span>`).join('');
+                    // 丙級星
+                    let mini = cell.minis.map(s=>`<span class="inline-block mr-2 mb-1 font-mini text-gray-700">${s.name}</span>`).join('');
+                    // 雜曜
+                    let mini2 = cell.minis2.map(s=>`<span class="inline-block mr-2 mb-1 font-mini2 text-purple-700">${s.name}</span>`).join('');
+                    div.innerHTML = `
+                        <div class="cell-majors">${maj}<span class="text-daxian">${cell.daxian}</span></div>
+                        <div class="cell-stars">
+                            <div class="inline-grid" style="grid-template-columns:auto auto;column-gap:5px">${min}</div>
+                            <div class="cell-mini-stars">${mini}${mini2}</div>
+                        </div>
+                        <div class="cell-info flex justify-between items-end border-t border-gray-200 pt-1">
+                            <div class="cell-info-side leading-tight font-mini">
+                                <div class="text-gray-900 font-semibold whitespace-nowrap">${cell.boshi}</div>
+                                <div class="text-gray-600 whitespace-nowrap">${cell.changsheng}</div>
+                                <div class="text-orange-700 font-cell-small font-medium whitespace-nowrap">${cell.suiqian}</div>
+                                <div class="text-green-700 font-cell-small font-medium whitespace-nowrap">${cell.jiangqian}</div>
+                            </div>
+                            <div class="cell-info-center">
+                                <div class="text-palace whitespace-nowrap">${cell.palace}</div>
+                            </div>
+                            <div class="cell-info-side flex flex-col items-end leading-tight text-gan-name">
+                                <span class="whitespace-nowrap">${cell.gan}</span>
+                                <span class="text-gray-700 whitespace-nowrap">${cell.name}</span>
+                            </div>
+                        </div>
+                        <div class="cell-xiaoxian font-num text-blue-900 border-t border-dashed border-gray-400 text-right px-1 flex items-center justify-end whitespace-nowrap">${cell.xiaoxian.slice(0,6).join(' ')}</div>`;
+                    c.appendChild(div);
+                });
+                // 中宮資訊區 - 加大字體，更清晰的資訊層級
+                const mid = document.createElement('div');
+                mid.className = "bg-gradient-to-br from-gray-50 to-white z-10 border-2 border-gray-800 flex flex-col shadow-lg";
+                mid.style.gridArea = "2/2/4/4";
+                mid.ondblclick = (e) => e.stopPropagation();
+                // 動態取得四化星
+                const sihuaStars = ZWDSEngine.SiHua_Table[(data.meta.ganzhi.charCodeAt(0) - '甲'.charCodeAt(0) + 10) % 10] || ZWDSEngine.SiHua_Table[0];
+                mid.innerHTML = `
+                    <div class="flex-grow flex flex-col p-4 relative">
+                        <div class="flex items-center gap-3 mb-3">
+                            <button onclick="app.toggleCenterInfo()" id="btn-toggle-info" class="win-btn px-3 py-2 text-blue-700 font-bold text-sm cursor-pointer rounded" title="命盤資訊">&#9432; 資訊</button>
+                            <div class="flex-grow"></div>
+                            <button onclick="app.returnToInput()" class="h-20 px-10 bg-red-100 border-2 border-red-600 rounded-xl text-red-700 font-black text-3xl shadow-md hover:bg-red-200 active:scale-95 flex items-center justify-center gap-3 transition-all cursor-pointer">
+                                <span class="text-3xl">&#8617;</span> 返回
+                            </button>
+                        </div>
+                        <div class="flex-grow flex flex-col justify-center">
+                            <div class="text-center mb-2">
+                                <div class="text-2xl font-black text-blue-900 mb-2">${data.meta.name || document.getElementById('inp-name').value || '命主'}</div>
+                                <div class="mb-1"><span class="text-xs text-gray-500 mr-1">農曆</span><span class="text-xl font-bold text-gray-800 tracking-widest">${data.meta.lunar}</span></div>
+                                <div><span class="text-xs text-gray-500 mr-1">國曆</span><span class="text-lg font-semibold text-gray-600 font-mono tracking-[0.3em]">${data.meta.solar}</span></div>
+                            </div>
+                        </div>
+                        <div id="center-info-panel" class="hidden flex-grow flex flex-col justify-center">
+                            <div class="grid grid-cols-2 gap-4 mb-4">
+                                <div class="bg-blue-50 rounded-lg p-3 border border-blue-200">
+                                    <div class="text-sm text-blue-600 font-medium">干支</div>
+                                    <div class="text-2xl font-black text-blue-900">${data.meta.ganzhi}年</div>
+                                </div>
+                                <div class="bg-purple-50 rounded-lg p-3 border border-purple-200">
+                                    <div class="text-sm text-purple-600 font-medium">五行局</div>
+                                    <div class="text-2xl font-black text-purple-900">${data.meta.bureau}</div>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-3 gap-3 mb-4">
+                                <div class="bg-gray-100 rounded-lg p-2 text-center border">
+                                    <div class="text-xs text-gray-500">性別</div>
+                                    <div class="text-lg font-bold ${data.meta.gender==='M'?'text-blue-700':'text-red-700'}">${data.meta.gender==='M'?'陽男':'陰女'}</div>
+                                </div>
+                                <div class="bg-red-50 rounded-lg p-2 text-center border border-red-200">
+                                    <div class="text-xs text-red-500">命宮</div>
+                                    <div class="text-lg font-bold text-red-700">${data.meta.ming}</div>
+                                </div>
+                                <div class="bg-orange-50 rounded-lg p-2 text-center border border-orange-200">
+                                    <div class="text-xs text-orange-500">身宮</div>
+                                    <div class="text-lg font-bold text-orange-700">${data.meta.shen}</div>
+                                </div>
+                            </div>
+                            <div class="bg-yellow-50 rounded-lg p-3 border border-yellow-300">
+                                <div class="text-sm text-yellow-700 font-medium mb-2 text-center">年干四化</div>
+                                <div class="grid grid-cols-4 gap-2 text-center">
+                                    <div><span class="text-xs text-gray-500">祿</span><div class="font-bold text-red-700">${sihuaStars[0]}</div></div>
+                                    <div><span class="text-xs text-gray-500">權</span><div class="font-bold text-red-700">${sihuaStars[1]}</div></div>
+                                    <div><span class="text-xs text-gray-500">科</span><div class="font-bold text-red-700">${sihuaStars[2]}</div></div>
+                                    <div><span class="text-xs text-gray-500">忌</span><div class="font-bold text-blue-700">${sihuaStars[3]}</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="border-t-2 border-gray-300 p-3 bg-gray-100 text-sm flex items-center flex-wrap gap-3">
+                        <div class="flex gap-4 justify-center flex-grow flex-wrap">
+                            <div class="w-24"><label for="slider-major" class="text-gray-600">甲級星</label><input id="slider-major" type="range" class="setting-slider" min="14" max="56" value="${(app.fontConfig&&app.fontConfig.major)||30}" oninput="app.updateFontSize('major', this.value)" aria-label="甲級星字體大小"></div>
+                            <div class="w-24"><label for="slider-minor" class="text-gray-600">乙級星</label><input id="slider-minor" type="range" class="setting-slider" min="10" max="32" value="${(app.fontConfig&&app.fontConfig.minor)||18}" oninput="app.updateFontSize('minor', this.value)" aria-label="乙級星字體大小"></div>
+                            <div class="w-24"><label for="slider-mini" class="text-gray-600">丙級星</label><input id="slider-mini" type="range" class="setting-slider" min="8" max="22" value="${(app.fontConfig&&app.fontConfig.mini)||14}" oninput="app.updateFontSize('mini', this.value)" aria-label="丙級星字體大小"></div>
+                            <div class="w-24"><label for="slider-mini2" class="text-gray-600">雜曜</label><input id="slider-mini2" type="range" class="setting-slider" min="8" max="18" value="${(app.fontConfig&&app.fontConfig.mini2)||12}" oninput="app.updateFontSize('mini2', this.value)" aria-label="雜曜字體大小"></div>
+                            <div class="w-24"><label for="slider-num" class="text-gray-600">數字</label><input id="slider-num" type="range" class="setting-slider" min="8" max="24" value="${(app.fontConfig&&app.fontConfig.num)||14}" oninput="app.updateFontSize('num', this.value)" aria-label="數字字體大小"></div>
+                        </div>
+                        <button onclick="app.toggleMiniStars()" id="btn-toggle-mini" class="win-btn px-3 py-2 text-purple-700 font-bold cursor-pointer" title="顯示/隱藏丙級以下小星" aria-label="顯示或隱藏丙級以下小星">&#9734; 小星</button>
+                        <button onclick="app.resetFontSettings()" class="win-btn px-3 py-2 text-gray-600 font-bold cursor-pointer" title="恢復自動縮放" aria-label="恢復自動縮放">&#8634; 自動</button>
+                        <button onclick="app.saveFontSettings()" class="win-btn px-3 py-2 text-blue-700 save-settings-btn font-bold cursor-pointer" title="儲存設定" aria-label="儲存字體設定">&#9745; 儲存</button>
+                    </div>
+                `;
+                c.appendChild(mid);
+            },
+            
+            exportJSON: function() { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(this.data)], {type:"application/json"})); a.download = "zwds_data.json"; a.click(); },
+            importJSON: function(input) { const r = new FileReader(); r.onload = e => { try{ this.data = JSON.parse(e.target.result); localStorage.setItem('zwds_data', JSON.stringify(this.data)); this.renderTable(); alert("匯入成功"); } catch(e){alert("格式錯誤");} }; if(input.files[0]) r.readAsText(input.files[0]); }
+        };
+        app.init();
+        // 啟動時檢查必要程式庫
+        if (typeof Lunar === 'undefined' || typeof Solar === 'undefined') {
+            document.getElementById('main-content').innerHTML = '<div style="padding:2rem;text-align:center;font-size:1.5rem;color:#dc2626;">'
+                + '<p style="font-size:2rem;font-weight:900;margin-bottom:1rem;">程式庫載入失敗</p>'
+                + '<p>找不到 <b>lib/lunar.js</b></p>'
+                + '<p style="margin-top:1rem;font-size:1rem;color:#666;">請確認以下檔案結構：</p>'
+                + '<pre style="text-align:left;display:inline-block;margin-top:0.5rem;background:#f3f4f6;padding:1rem;border-radius:8px;font-size:1rem;">'
+                + '紫微斗數.html\nlib/\n  lunar.js\n  tailwind.min.js</pre></div>';
+        }
+    </script>
+</body>
+</html>

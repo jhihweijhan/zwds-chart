@@ -1,0 +1,13 @@
+# IDE & editor
+.claude/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project
+CLAUDE.md
