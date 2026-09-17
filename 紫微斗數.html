@@ -1002,8 +1002,10 @@
                 mid.className = "bg-gradient-to-br from-gray-50 to-white z-10 border-2 border-gray-800 flex flex-col shadow-lg";
                 mid.style.gridArea = "2/2/4/4";
                 mid.ondblclick = (e) => e.stopPropagation();
-                // 動態取得四化星
-                const sihuaStars = ZWDSEngine.SiHua_Table[(data.meta.ganzhi.charCodeAt(0) - '甲'.charCodeAt(0) + 10) % 10] || ZWDSEngine.SiHua_Table[0];
+                const currentLunar = Solar.fromDate(new Date()).getLunar();
+                const currentGanzhi = currentLunar.getYearInGanZhi();
+                const currentYear = currentLunar.getYear();
+                const sihuaStars = ZWDSEngine.SiHua_Table[ZWDSEngine.Stems.indexOf(currentGanzhi[0])];
                 mid.innerHTML = `
                     <div class="flex-grow flex flex-col p-4 relative">
                         <div class="flex items-center gap-3 mb-3">
@@ -1050,7 +1052,7 @@
                                 </div>
                             </div>
                             <div class="bg-yellow-50 rounded-lg p-3 border border-yellow-300">
-                                <div class="text-sm text-yellow-700 font-medium mb-2 text-center">年干四化</div>
+                                <div class="text-sm text-yellow-700 font-medium mb-2 text-center">${currentYear}年（${currentGanzhi}）流年四化</div>
                                 <div class="grid grid-cols-4 gap-2 text-center">
                                     <div><span class="text-xs text-gray-500">祿</span><div class="font-bold text-red-700">${sihuaStars[0]}</div></div>
                                     <div><span class="text-xs text-gray-500">權</span><div class="font-bold text-red-700">${sihuaStars[1]}</div></div>
