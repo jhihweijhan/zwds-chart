@@ -460,6 +460,7 @@
         const ZWDSEngine = {
             Stems: ["甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"],
             Branches: ["子", "丑", "寅", "卯", "辰", "巳", "午", "未", "申", "酉", "戌", "亥"],
+            Zodiac: ["鼠", "牛", "虎", "兔", "龍", "蛇", "馬", "羊", "猴", "雞", "狗", "豬"],
             PalaceNames: ["命宮", "兄弟", "夫妻", "子女", "財帛", "疾厄", "遷移", "交友", "官祿", "田宅", "福德", "父母"],
             BureauMap: {2: "水二局", 3: "木三局", 4: "金四局", 5: "土五局", 6: "火六局"},
             ChangSheng12: ["長生", "沐浴", "冠帶", "臨官", "帝旺", "衰", "病", "死", "墓", "絕", "胎", "養"],
@@ -545,7 +546,7 @@
                 // 將前十二神（依生年支三合局）
                 let jiangPos = this.JiangXing_Map[yearZhi];
                 for(let i=0; i<12; i++) chart[this.idx(jiangPos+i)].jiangqian = this.JiangQian12[i];
-                return { meta: { solar: solar.toYmd(), lunar: finalLunar.toString(), ganzhi: finalLunar.getYearInGanZhi(), bureau: this.BureauMap[bureauNum], ming: this.Branches[mingIdx], shen: this.Branches[shenIdx], gender }, chart };
+                return { meta: { solar: solar.toYmd(), lunar: finalLunar.toString(), ganzhi: finalLunar.getYearInGanZhi(), zodiac: this.Zodiac[yearZhi], bureau: this.BureauMap[bureauNum], ming: this.Branches[mingIdx], shen: this.Branches[shenIdx], gender }, chart };
             },
             placeStars: function(chart, zwIdx, tfIdx, m, d, h, g, z, mingIdx, shenIdx) {
                 const add = (i, n, rank="mini") => { let pos=this.idx(i); let b=(rank==="major")?this.getBrightness(n,pos):""; let target = (rank==="major") ? chart[pos].majors : (rank==="minor") ? chart[pos].minors : chart[pos].minis; target.push({name:n, type:rank, bright:b}); };
@@ -1006,7 +1007,7 @@
                 mid.innerHTML = `
                     <div class="flex-grow flex flex-col p-4 relative">
                         <div class="flex items-center gap-3 mb-3">
-                            <button onclick="app.toggleCenterInfo()" id="btn-toggle-info" class="win-btn px-3 py-2 text-blue-700 font-bold text-sm cursor-pointer rounded" title="命盤資訊">&#9432; 資訊</button>
+                            <button onclick="app.toggleCenterInfo()" id="btn-toggle-info" class="win-btn px-3 py-2 text-blue-700 font-bold text-sm cursor-pointer rounded" style="background:#dbeafe;border-color:#2563eb" title="命盤資訊">&#9432; 資訊</button>
                             <div class="flex-grow"></div>
                             <button onclick="app.returnToInput()" class="h-20 px-10 bg-red-100 border-2 border-red-600 rounded-xl text-red-700 font-black text-3xl shadow-md hover:bg-red-200 active:scale-95 flex items-center justify-center gap-3 transition-all cursor-pointer">
                                 <span class="text-3xl">&#8617;</span> 返回
@@ -1019,11 +1020,15 @@
                                 <div><span class="text-xs text-gray-500 mr-1">國曆</span><span class="text-lg font-semibold text-gray-600 font-mono tracking-[0.3em]">${data.meta.solar}</span></div>
                             </div>
                         </div>
-                        <div id="center-info-panel" class="hidden flex-grow flex flex-col justify-center">
-                            <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div id="center-info-panel" class="flex-grow flex flex-col justify-center">
+                            <div class="grid grid-cols-3 gap-3 mb-4">
                                 <div class="bg-blue-50 rounded-lg p-3 border border-blue-200">
                                     <div class="text-sm text-blue-600 font-medium">干支</div>
                                     <div class="text-2xl font-black text-blue-900">${data.meta.ganzhi}年</div>
+                                </div>
+                                <div class="bg-green-50 rounded-lg p-3 border border-green-200">
+                                    <div class="text-sm text-green-600 font-medium">生肖</div>
+                                    <div class="text-2xl font-black text-green-900">屬　${data.meta.zodiac}</div>
                                 </div>
                                 <div class="bg-purple-50 rounded-lg p-3 border border-purple-200">
                                     <div class="text-sm text-purple-600 font-medium">五行局</div>
